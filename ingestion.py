@@ -1,12 +1,3 @@
-#!/usr/bin/env python3
-"""
-ingestion.py — Data Preprocessing & Normalization Engine
-Smart Retail Supply Chain and Customer Intelligence Platform
-
-Reads Retail.csv and Warehouse.csv, cleans/normalizes data,
-creates SKUs, performs retail↔warehouse matching, and loads
-results into database.db (SQLite).
-"""
 
 import ast
 import json
@@ -36,7 +27,7 @@ RETAIL_COLUMN_MAP = {
     "Total_Items": "quantity",
     "City": "city",
     "Store_Type": "store_type",
-    "Discount_Applied": "online_flag",
+    "Discount_Applied": "da_flag",
 }
 
 RETAIL_KEEP_COLUMNS = list(RETAIL_COLUMN_MAP.keys())
@@ -162,7 +153,7 @@ def load_retail_data() -> pd.DataFrame:
     # Default quantity to 1 where NULL
     df["quantity"] = df["quantity"].fillna(1).astype(int)
 
-    # city, store_type, online_flag → keep NULL as-is (pandas NaN)
+    # city, store_type, da_flag → keep NULL as-is (pandas NaN)
 
     print(f"    Loaded {original_count} rows, discarded {discarded_critical} (NULL order_id/product_list)")
     print(f"    Retained {len(df)} rows before explosion")
@@ -225,15 +216,7 @@ def load_warehouse_data() -> pd.DataFrame:
 # ──────────────────────────────────────────────
 
 def apply_normalization(retail_df: pd.DataFrame, warehouse_df: pd.DataFrame):
-    """
-    Apply SKU normalization to both datasets and build the products master table.
-
-    Returns:
-        (retail_df, warehouse_df, products_df)
-    """
     print("[4/6] Normalizing product names and creating SKUs ...")
-
-    # Normalize retail products
     retail_norm = retail_df["product_name"].apply(normalize_product_name)
     retail_df["normalized_sku"] = retail_norm.apply(lambda x: x[0])
     retail_df["base_product_name"] = retail_norm.apply(lambda x: x[1])
@@ -258,10 +241,6 @@ def apply_normalization(retail_df: pd.DataFrame, warehouse_df: pd.DataFrame):
 
 
 def match_retail_to_warehouse(retail_df: pd.DataFrame, warehouse_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    For each retail product row, flag whether it matches a warehouse SKU.
-    Never fails ingestion; unmatched products are flagged FALSE.
-    """
     print("[5/6] Matching retail products to warehouse inventory ...")
 
     warehouse_skus = set(warehouse_df["normalized_sku"].unique())
@@ -306,7 +285,7 @@ def write_to_database(
             quantity INTEGER,
             city TEXT,
             store_type TEXT,
-            online_flag TEXT,
+            da_flag TEXT,
             warehouse_match TEXT
         )
     """)
@@ -329,7 +308,7 @@ def write_to_database(
     # Prepare retail data for insertion
     retail_out = retail_df[[
         "order_id", "order_date", "product_name", "normalized_sku",
-        "quantity", "city", "store_type", "online_flag", "warehouse_match"
+        "quantity", "city", "store_type", "da_flag", "warehouse_match"
     ]].copy()
     retail_out["order_id"] = retail_out["order_id"].astype(str)
 
@@ -353,11 +332,6 @@ def write_to_database(
         print(f"    {table}: {count} rows")
 
     conn.close()
-
-
-# ──────────────────────────────────────────────
-# MAIN
-# ──────────────────────────────────────────────
 
 def main():
     print("=" * 60)
