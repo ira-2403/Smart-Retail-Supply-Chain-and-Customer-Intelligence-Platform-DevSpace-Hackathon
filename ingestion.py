@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 from queue import Queue, Empty
+import threading
+import time
 import ast
 import re
 import sqlite3
@@ -148,7 +150,9 @@ def write_to_database(retail_df, warehouse_df, products_df):
         )
     """)
 
-    warehouse_df.to_sql("warehouse_inventory", conn, if_exists="append", index=False)
+    # Filter to only expected columns
+    warehouse_to_db = warehouse_df[["product_name", "normalized_sku", "stock_quantity"]]
+    warehouse_to_db.to_sql("warehouse_inventory", conn, if_exists="append", index=False)
     products_df.to_sql("products", conn, if_exists="append", index=False)
 
     conn.commit()
@@ -160,14 +164,16 @@ def publish_event(event_type, payload):
 
 def consumer_worker():
 
-    print("Consumer started")
+    print("Consumer thread started")
 
     conn = sqlite3.connect(str(DATABASE_PATH))
 
     while True:
-        try:
-            event = EVENT_QUEUE.get_nowait()
-        except Empty:
+        # Blocks until an event is available
+        event = EVENT_QUEUE.get()
+
+        if event is None: # Sentinel/Poison Pill
+            print("Consumer received shutdown signal")
             break
 
         if event["event_type"] == "retail_transaction":
@@ -196,7 +202,7 @@ def consumer_worker():
     conn.commit()
     conn.close()
 
-    print("Consumer finished")
+    print("Consumer thread finished")
 
 def main():
 
@@ -215,12 +221,25 @@ def main():
     # create schema only
     write_to_database(retail_df.iloc[0:0], warehouse_df, products_df)
 
-    print("Publishing events...")
+    # Start consumer thread
+    consumer_thread = threading.Thread(target=consumer_worker, daemon=True)
+    consumer_thread.start()
 
-    for row in retail_df.to_dict("records"):
+    print("Publishing events to queue...")
+
+    for i, row in enumerate(retail_df.to_dict("records")):
         publish_event("retail_transaction", row)
+        # Small sleep to simulate streaming data
+        if i % 10 == 0:
+            time.sleep(0.01)
 
-    consumer_worker()
+    print("All events published. Sending shutdown signal...")
+    # Send sentinel to stop consumer
+    EVENT_QUEUE.put(None)
+
+    # Wait for consumer to finish processing
+    consumer_thread.join()
+    print("Main execution finished")
 
 
 if __name__ == "__main__":
